@@ -1,4 +1,4 @@
-import { isSolid } from './blocks';
+import { BLOCK, isRenderable } from './blocks';
 import { CHUNK_SIZE_Y, type World } from './world';
 
 export interface RayHit {
@@ -57,8 +57,12 @@ export function castVoxelRay(
   let t = 0;
 
   while (t <= maxDist) {
-    if (y >= 0 && y < CHUNK_SIZE_Y && isSolid(world.getBlock(x, y, z))) {
-      return { x, y, z, nx: faceNx, ny: faceNy, nz: faceNz, distance: t };
+    if (y >= 0 && y < CHUNK_SIZE_Y) {
+      const id = world.getBlock(x, y, z);
+      // Hit any non-air block (water, glass, plants, solids)
+      if (id !== BLOCK.AIR && isRenderable(id)) {
+        return { x, y, z, nx: faceNx, ny: faceNy, nz: faceNz, distance: t };
+      }
     }
 
     if (tMaxX < tMaxY) {

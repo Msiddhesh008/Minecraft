@@ -107,6 +107,11 @@ function generateChunk(chunk: Chunk, noise: NoiseSet): void {
           if (cave > 0.62) id = BLOCK.AIR;
         }
 
+        // Decorative sea: fill air below sea level with static water
+        if (id === BLOCK.AIR && ly > 0 && ly <= SEA_LEVEL && ly > height) {
+          id = BLOCK.WATER;
+        }
+
         chunk.blocks[localIndex(lx, ly, lz)] = id;
       }
     }

@@ -1,41 +1,63 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { meshChunk, meshDataToGeometry } from './mesher';
+import {
+  meshChunkOpaque,
+  meshChunkTransparent,
+  meshDataToGeometry,
+} from './mesher';
 import { chunkKey, world, type Chunk } from './world';
 
 interface ChunkMeshProps {
   chunk: Chunk;
 }
 
-const sharedMaterial = new THREE.MeshLambertMaterial({
+const opaqueMaterial = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
 });
 
-export function ChunkMesh({ chunk }: ChunkMeshProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const versionRef = useRef(-1);
+const transparentMaterial = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.4,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+});
 
-  const geometry = useMemo(() => {
-    const data = meshChunk(world, chunk);
-    return meshDataToGeometry(data);
+export function ChunkMesh({ chunk }: ChunkMeshProps) {
+  const opaqueGeo = useMemo(() => {
+    return meshDataToGeometry(meshChunkOpaque(world, chunk));
+  }, [chunk, chunk.version]);
+
+  const transparentGeo = useMemo(() => {
+    return meshDataToGeometry(meshChunkTransparent(world, chunk));
   }, [chunk, chunk.version]);
 
   useEffect(() => {
-    versionRef.current = chunk.version;
     chunk.dirty = false;
     return () => {
-      geometry.dispose();
+      opaqueGeo.dispose();
+      transparentGeo.dispose();
     };
-  }, [geometry, chunk]);
+  }, [opaqueGeo, transparentGeo, chunk]);
+
+  const hasTransparent = (transparentGeo.getIndex()?.count ?? 0) > 0;
 
   return (
-    <mesh
-      ref={meshRef}
-      geometry={geometry}
-      material={sharedMaterial}
-      frustumCulled
-      name={chunkKey(chunk.cx, chunk.cz)}
-    />
+    <group name={chunkKey(chunk.cx, chunk.cz)}>
+      <mesh
+        geometry={opaqueGeo}
+        material={opaqueMaterial}
+        frustumCulled
+      />
+      {hasTransparent ? (
+        <mesh
+          geometry={transparentGeo}
+          material={transparentMaterial}
+          frustumCulled
+          renderOrder={1}
+        />
+      ) : null}
+    </group>
   );
 }

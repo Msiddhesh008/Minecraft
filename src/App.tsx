@@ -4,6 +4,7 @@ import { DayNight } from './game/DayNight';
 import { Player } from './game/Player';
 import { CameraModeToggle } from './ui/CameraModeToggle';
 import { ControlsHint } from './ui/ControlsHint';
+import { CreativePalette } from './ui/CreativePalette';
 import { Crosshair } from './ui/Crosshair';
 import { Hotbar } from './ui/Hotbar';
 import './App.css';
@@ -27,6 +28,7 @@ export default function App() {
       <Crosshair />
       <Hotbar />
       <CameraModeToggle />
+      <CreativePalette />
       <ControlsHint />
     </div>
   );

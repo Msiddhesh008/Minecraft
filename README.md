@@ -1,6 +1,6 @@
 # Voxel Sandbox
 
-A Minecraft-style 3D sandbox in the browser — React, TypeScript, Three.js (React Three Fiber).
+A Minecraft-style **creative** 3D sandbox in the browser — React, TypeScript, Three.js (React Three Fiber).
 
 ## Run
 
@@ -16,17 +16,23 @@ npm run dev
 | Click | Lock mouse / play |
 | WASD | Move |
 | Space | Jump |
-| Shift | Sprint |
+| Double-Space | Toggle fly |
+| Space / Shift (while flying) | Up / down |
 | Mouse | Look |
 | Left click | Break block |
 | Right click | Place block |
-| 1–8 | Hotbar slot |
+| Middle click / F | Pick block into hotbar |
+| Scroll | Cycle hotbar |
+| E | Creative palette |
+| 1–9 | Hotbar slot |
 | V | Toggle FPP / TPP camera |
 | Esc | Release mouse |
 
 ## Features
 
-- Chunked terrain with caves, trees, coal/iron ore
-- Gravity, jumping, voxel collision
-- Break/place with inventory hotbar
+- Creative mode with unlimited blocks (~40 types)
+- Glass, decorative water, plants, wools, lights, building materials
+- Palette (E) to assign any block to the hotbar
+- Fly mode for building
+- Chunked terrain with caves, trees, ores, coastal water
 - Day/night lighting cycle

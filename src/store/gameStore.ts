@@ -1,11 +1,15 @@
 import { create } from 'zustand';
-import { BLOCK, HOTBAR_BLOCKS, type BlockId } from '../game/blocks';
+import {
+  BLOCK,
+  HOTBAR_BLOCKS,
+  isReplaceable,
+  type BlockId,
+} from '../game/blocks';
 import { world } from '../game/world';
 import type { RayHit } from '../game/Raycast';
 
 export interface HotbarSlot {
   block: BlockId;
-  count: number;
 }
 
 export type CameraMode = 'fpp' | 'tpp';
@@ -16,36 +20,55 @@ interface GameState {
   locked: boolean;
   showHint: boolean;
   cameraMode: CameraMode;
+  paletteOpen: boolean;
+  flying: boolean;
   target: RayHit | null;
   playerPos: { x: number; y: number; z: number };
   setSelectedSlot: (slot: number) => void;
+  cycleHotbar: (delta: number) => void;
+  setHotbarBlock: (slot: number, block: BlockId) => void;
   setLocked: (locked: boolean) => void;
   dismissHint: () => void;
   toggleCameraMode: () => void;
   setCameraMode: (mode: CameraMode) => void;
+  setPaletteOpen: (open: boolean) => void;
+  togglePalette: () => void;
+  toggleFlying: () => void;
+  setFlying: (flying: boolean) => void;
   setTarget: (hit: RayHit | null) => void;
   setPlayerPos: (x: number, y: number, z: number) => void;
+  pickBlock: () => void;
   breakBlock: () => void;
   placeBlock: () => void;
 }
 
-const starterCounts = [64, 64, 64, 32, 32, 32, 16, 16];
-
 export const useGameStore = create<GameState>((set, get) => ({
   selectedSlot: 0,
-  hotbar: HOTBAR_BLOCKS.map((block, i) => ({
-    block,
-    count: starterCounts[i] ?? 16,
-  })),
+  hotbar: HOTBAR_BLOCKS.map((block) => ({ block })),
   locked: false,
   showHint: true,
   cameraMode: 'fpp',
+  paletteOpen: false,
+  flying: false,
   target: null,
   playerPos: { x: 0, y: 40, z: 0 },
 
   setSelectedSlot: (slot) => {
     if (slot < 0 || slot > 8) return;
     set({ selectedSlot: slot });
+  },
+
+  cycleHotbar: (delta) => {
+    const { selectedSlot } = get();
+    const next = ((selectedSlot + delta) % 9 + 9) % 9;
+    set({ selectedSlot: next });
+  },
+
+  setHotbarBlock: (slot, block) => {
+    if (slot < 0 || slot > 8) return;
+    if (block === BLOCK.AIR || block === BLOCK.BEDROCK) return;
+    const hotbar = get().hotbar.map((s, i) => (i === slot ? { block } : s));
+    set({ hotbar, selectedSlot: slot });
   },
 
   setLocked: (locked) => set({ locked }),
@@ -56,6 +79,20 @@ export const useGameStore = create<GameState>((set, get) => ({
     set((s) => ({ cameraMode: s.cameraMode === 'fpp' ? 'tpp' : 'fpp' })),
 
   setCameraMode: (mode) => set({ cameraMode: mode }),
+
+  setPaletteOpen: (open) => set({ paletteOpen: open }),
+
+  togglePalette: () => {
+    const open = !get().paletteOpen;
+    set({ paletteOpen: open, showHint: false });
+    if (open && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  },
+
+  toggleFlying: () => set((s) => ({ flying: !s.flying })),
+
+  setFlying: (flying) => set({ flying }),
 
   setTarget: (target) => set({ target }),
 
@@ -71,36 +108,35 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ playerPos: { x, y, z } });
   },
 
-  breakBlock: () => {
-    const { target, hotbar } = get();
+  pickBlock: () => {
+    const { target, selectedSlot } = get();
     if (!target) return;
+    const id = world.getBlock(target.x, target.y, target.z) as BlockId;
+    if (id === BLOCK.AIR || id === BLOCK.BEDROCK) return;
+    get().setHotbarBlock(selectedSlot, id);
+  },
+
+  breakBlock: () => {
+    const { target, paletteOpen } = get();
+    if (!target || paletteOpen) return;
     const id = world.getBlock(target.x, target.y, target.z);
     if (id === BLOCK.AIR || id === BLOCK.BEDROCK) return;
-
     world.setBlock(target.x, target.y, target.z, BLOCK.AIR);
-
-    const slotIndex = hotbar.findIndex((s) => s.block === id);
-    if (slotIndex >= 0) {
-      const next = hotbar.map((s, i) =>
-        i === slotIndex ? { ...s, count: Math.min(64, s.count + 1) } : s,
-      );
-      set({ hotbar: next });
-    }
   },
 
   placeBlock: () => {
-    const { target, selectedSlot, hotbar, playerPos } = get();
-    if (!target) return;
+    const { target, selectedSlot, hotbar, playerPos, paletteOpen } = get();
+    if (!target || paletteOpen) return;
     const slot = hotbar[selectedSlot];
-    if (!slot || slot.count <= 0) return;
+    if (!slot) return;
 
     const px = Math.floor(target.x + target.nx);
     const py = Math.floor(target.y + target.ny);
     const pz = Math.floor(target.z + target.nz);
 
-    if (world.getBlock(px, py, pz) !== BLOCK.AIR) return;
+    const existing = world.getBlock(px, py, pz);
+    if (!isReplaceable(existing)) return;
 
-    // Don't place inside player AABB (~0.6 x 1.8)
     const feetY = playerPos.y;
     const headY = playerPos.y + 1.7;
     const overlapX = px === Math.floor(playerPos.x);
@@ -108,11 +144,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     const overlapY = py >= Math.floor(feetY) && py <= Math.floor(headY);
     if (overlapX && overlapZ && overlapY) return;
 
-    if (!world.setBlock(px, py, pz, slot.block)) return;
-
-    const next = hotbar.map((s, i) =>
-      i === selectedSlot ? { ...s, count: s.count - 1 } : s,
-    );
-    set({ hotbar: next });
+    world.setBlock(px, py, pz, slot.block);
   },
 }));

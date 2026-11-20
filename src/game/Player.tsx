@@ -9,12 +9,14 @@ import { TargetHighlight } from './TargetHighlight';
 import { world } from './world';
 
 const MOVE_SPEED = 4.5;
+const FLY_SPEED = 8;
 const SPRINT_MULT = 1.55;
 const JUMP_SPEED = 7.2;
 const GRAVITY = 22;
 const MOUSE_SENS = 0.0022;
 const TPP_DISTANCE = 5.5;
 const TPP_LOOK_HEIGHT = 1.5;
+const DOUBLE_TAP_MS = 280;
 
 function cameraBlockedDistance(
   from: THREE.Vector3,
@@ -26,13 +28,12 @@ function cameraBlockedDistance(
   if (full < 0.001) return maxDist;
   dir.multiplyScalar(1 / full);
 
-  // Start slightly away from the player so we don't instantly hit nearby voxels
   const ox = from.x + dir.x * 0.4;
   const oy = from.y + dir.y * 0.4;
   const oz = from.z + dir.z * 0.4;
   const hit = castVoxelRay(world, ox, oy, oz, dir.x, dir.y, dir.z, full);
   if (!hit) return maxDist;
-  return Math.max(1.2, Math.min(maxDist, hit.distance + 0.4 - 0.3));
+  return Math.max(1.2, Math.min(maxDist, hit.distance + 0.1));
 }
 
 export function Player() {
@@ -45,6 +46,7 @@ export function Player() {
   const movingRef = useRef(false);
   const grounded = useRef(false);
   const spawned = useRef(false);
+  const lastSpaceTap = useRef(0);
   const lookTarget = useRef(new THREE.Vector3());
   const desiredCam = useRef(new THREE.Vector3());
   const camDir = useRef(new THREE.Vector3());
@@ -52,6 +54,7 @@ export function Player() {
 
   const locked = useGameStore((s) => s.locked);
   const cameraMode = useGameStore((s) => s.cameraMode);
+  const paletteOpen = useGameStore((s) => s.paletteOpen);
 
   useEffect(() => {
     world.getOrCreateChunk(0, 0);
@@ -66,6 +69,7 @@ export function Player() {
     const store = () => useGameStore.getState();
 
     const onClick = () => {
+      if (store().paletteOpen) return;
       if (document.pointerLockElement !== el) {
         el.requestPointerLock();
         store().dismissHint();
@@ -78,6 +82,7 @@ export function Player() {
 
     const onMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement !== el) return;
+      if (store().paletteOpen) return;
       euler.current.y -= e.movementX * MOUSE_SENS;
       euler.current.x -= e.movementY * MOUSE_SENS;
       const mode = store().cameraMode;
@@ -86,9 +91,20 @@ export function Player() {
     };
 
     const onMouseDown = (e: MouseEvent) => {
+      if (store().paletteOpen) return;
       if (document.pointerLockElement !== el) return;
       if (e.button === 0) store().breakBlock();
       if (e.button === 2) store().placeBlock();
+      if (e.button === 1) {
+        e.preventDefault();
+        store().pickBlock();
+      }
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (store().paletteOpen) return;
+      e.preventDefault();
+      store().cycleHotbar(e.deltaY > 0 ? 1 : -1);
     };
 
     const onContextMenu = (e: Event) => e.preventDefault();
@@ -96,17 +112,47 @@ export function Player() {
     const onKeyDown = (e: KeyboardEvent) => {
       keys.current.add(e.code);
       if (e.repeat) return;
+      const s = store();
+
+      if (e.code === 'KeyE') {
+        e.preventDefault();
+        s.togglePalette();
+        return;
+      }
+
+      if (s.paletteOpen) {
+        if (e.code === 'Escape') s.setPaletteOpen(false);
+        return;
+      }
 
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.replace('Digit', ''));
-        if (n >= 1 && n <= 9) store().setSelectedSlot(n - 1);
+        if (n >= 1 && n <= 9) s.setSelectedSlot(n - 1);
       }
 
-      if (e.code === 'KeyV' || e.key === 'v' || e.key === 'V') {
+      if (e.code === 'KeyV') {
         e.preventDefault();
-        store().toggleCameraMode();
+        s.toggleCameraMode();
+      }
+
+      if (e.code === 'KeyF') {
+        e.preventDefault();
+        s.pickBlock();
+      }
+
+      if (e.code === 'Space') {
+        const now = performance.now();
+        if (now - lastSpaceTap.current < DOUBLE_TAP_MS) {
+          e.preventDefault();
+          s.toggleFlying();
+          vel.current.y = 0;
+          lastSpaceTap.current = 0;
+        } else {
+          lastSpaceTap.current = now;
+        }
       }
     };
+
     const onKeyUp = (e: KeyboardEvent) => {
       keys.current.delete(e.code);
     };
@@ -115,6 +161,7 @@ export function Player() {
     document.addEventListener('pointerlockchange', onLockChange);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
@@ -124,6 +171,7 @@ export function Player() {
       document.removeEventListener('pointerlockchange', onLockChange);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('wheel', onWheel);
       document.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp, true);
@@ -133,7 +181,10 @@ export function Player() {
   useFrame((_, dt) => {
     if (!spawned.current) return;
     const store = useGameStore.getState();
+    if (store.paletteOpen) return;
+
     const mode = store.cameraMode;
+    const flying = store.flying;
     const clamped = Math.min(dt, 0.05);
     const k = keys.current;
     const yaw = euler.current.y;
@@ -162,9 +213,10 @@ export function Player() {
       mz -= rightZ;
     }
 
+    const sprint = k.has('ShiftLeft') || k.has('ShiftRight');
     const len = Math.hypot(mx, mz);
-    const speed = MOVE_SPEED * (k.has('ShiftLeft') || k.has('ShiftRight') ? SPRINT_MULT : 1);
-    movingRef.current = len > 0;
+    const speed = (flying ? FLY_SPEED : MOVE_SPEED) * (sprint && !flying ? SPRINT_MULT : 1);
+    movingRef.current = len > 0 || (flying && (k.has('Space') || sprint));
     if (len > 0) {
       mx = (mx / len) * speed;
       mz = (mz / len) * speed;
@@ -172,14 +224,23 @@ export function Player() {
 
     vel.current.x = mx;
     vel.current.z = mz;
-    vel.current.y -= GRAVITY * clamped;
 
-    if (grounded.current && k.has('Space')) {
-      vel.current.y = JUMP_SPEED;
-      grounded.current = false;
+    if (flying) {
+      let my = 0;
+      if (k.has('Space')) my += FLY_SPEED;
+      if (sprint) my -= FLY_SPEED;
+      vel.current.y = my;
+    } else {
+      vel.current.y -= GRAVITY * clamped;
+      if (grounded.current && k.has('Space')) {
+        vel.current.y = JUMP_SPEED;
+        grounded.current = false;
+      }
     }
 
     grounded.current = moveWithCollision(pos.current, vel.current, clamped);
+    if (flying) grounded.current = false;
+
     yawRef.current = yaw;
     store.setPlayerPos(pos.current.x, pos.current.y, pos.current.z);
 
@@ -193,7 +254,6 @@ export function Player() {
         pos.current.z,
       );
       const pitch = euler.current.x;
-      // Orbit behind the look direction
       desiredCam.current.set(
         pos.current.x + Math.sin(yaw) * Math.cos(pitch) * TPP_DISTANCE,
         pos.current.y + TPP_LOOK_HEIGHT + 0.35 - Math.sin(pitch) * TPP_DISTANCE,
@@ -229,6 +289,7 @@ export function Player() {
       pos.current.z = 0.5;
       pos.current.y = world.findSpawnY(0, 0);
       vel.current = { x: 0, y: 0, z: 0 };
+      store.setFlying(false);
     }
   });
 
@@ -238,9 +299,9 @@ export function Player() {
         position={pos}
         yaw={yawRef}
         moving={movingRef}
-        visible={cameraMode === 'tpp'}
+        visible={cameraMode === 'tpp' && !paletteOpen}
       />
-      {locked ? <TargetHighlight /> : null}
+      {locked && !paletteOpen ? <TargetHighlight /> : null}
     </>
   );
 }
